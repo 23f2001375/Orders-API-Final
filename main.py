@@ -1,14 +1,13 @@
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from uuid import uuid4
-import time
 import base64
+import time
 
 app = FastAPI()
 
-# Allow CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,48 +18,69 @@ app.add_middleware(
 
 TOTAL_ORDERS = 54
 RATE_LIMIT = 15
-WINDOW = 10  # seconds
+WINDOW = 10
 
-# In-memory storage
-idempotency_store = {}
-client_requests = {}
+idempotency = {}
+rate_buckets = {}
 
-# Fixed catalog
-catalog = [
-    {
-        "id": i,
-        "item": f"Item {i}"
-    }
-    for i in range(1, TOTAL_ORDERS + 1)
-]
+catalog = [{"id": i} for i in range(1, TOTAL_ORDERS + 1)]
 
 
-class OrderRequest(BaseModel):
+class Order(BaseModel):
     item: str = "Sample Item"
 
 
-@app.post("/orders", status_code=201)
+@app.middleware("http")
+async def limiter(request: Request, call_next):
+    # Allow CORS preflight
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    client = request.headers.get("X-Client-Id", "anonymous")
+    now = time.time()
+
+    bucket = rate_buckets.get(client, [])
+    bucket = [t for t in bucket if now - t < WINDOW]
+
+    if len(bucket) >= RATE_LIMIT:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded"},
+            headers={"Retry-After": "10"},
+        )
+
+    bucket.append(now)
+    rate_buckets[client] = bucket
+
+    return await call_next(request)
+
+
+@app.post("/orders")
 def create_order(
-    order: OrderRequest,
+    order: Order,
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
 ):
-    if idempotency_key in idempotency_store:
-        return idempotency_store[idempotency_key]
+    if idempotency_key in idempotency:
+        return JSONResponse(
+            status_code=200,
+            content=idempotency[idempotency_key],
+        )
 
-    new_order = {
+    result = {
         "id": str(uuid4()),
         "item": order.item,
     }
 
-    idempotency_store[idempotency_key] = new_order
-    return new_order
+    idempotency[idempotency_key] = result
 
+    return JSONResponse(
+        status_code=201,
+        content=result,
+    )
 
 @app.get("/orders")
-def list_orders(
-    limit: int = 10,
-    cursor: str | None = None,
-):
+def get_orders(limit: int = 10, cursor: str | None = None):
+
     start = 0
 
     if cursor:
@@ -70,11 +90,13 @@ def list_orders(
             start = 0
 
     limit = max(1, min(limit, TOTAL_ORDERS))
+
     end = min(start + limit, TOTAL_ORDERS)
 
     items = catalog[start:end]
 
     next_cursor = None
+
     if end < TOTAL_ORDERS:
         next_cursor = base64.b64encode(str(end).encode()).decode()
 
@@ -82,27 +104,3 @@ def list_orders(
         "items": items,
         "next_cursor": next_cursor,
     }
-
-
-@app.middleware("http")
-async def rate_limit(request, call_next):
-    client = request.headers.get("X-Client-Id", "anonymous")
-
-    now = time.time()
-
-    history = client_requests.get(client, [])
-
-    history = [t for t in history if now - t < WINDOW]
-
-    if len(history) >= RATE_LIMIT:
-        return JSONResponse(
-            status_code=429,
-            content={"detail": "Rate limit exceeded"},
-            headers={"Retry-After": "10"},
-        )
-
-    history.append(now)
-
-    client_requests[client] = history
-
-    return await call_next(request)
