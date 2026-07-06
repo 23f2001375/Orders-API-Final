@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 from uuid import uuid4
 import time
 import base64
@@ -11,7 +12,7 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -68,6 +69,7 @@ def list_orders(
         except Exception:
             start = 0
 
+    limit = max(1, min(limit, TOTAL_ORDERS))
     end = min(start + limit, TOTAL_ORDERS)
 
     items = catalog[start:end]
@@ -93,11 +95,11 @@ async def rate_limit(request, call_next):
     history = [t for t in history if now - t < WINDOW]
 
     if len(history) >= RATE_LIMIT:
-        raise HTTPException(
-            status_code=429,
-            detail="Rate limit exceeded",
-            headers={"Retry-After": "10"},
-        )
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded"},
+        headers={"Retry-After": "10"},
+    )
 
     history.append(now)
 
