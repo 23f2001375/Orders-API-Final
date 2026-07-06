@@ -95,11 +95,11 @@ async def rate_limit(request, call_next):
     history = [t for t in history if now - t < WINDOW]
 
     if len(history) >= RATE_LIMIT:
-    return JSONResponse(
-        status_code=429,
-        content={"detail": "Rate limit exceeded"},
-        headers={"Retry-After": "10"},
-    )
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded"},
+            headers={"Retry-After": "10"},
+        )
 
     history.append(now)
 
