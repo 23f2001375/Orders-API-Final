@@ -68,9 +68,8 @@ async def rate_limit(request: Request, call_next):
         response = JSONResponse(
             status_code=429,
             content={"detail": "Rate limit exceeded"},
+            headers={"Retry-After": str(retry_after)},
         )
-
-        response.headers["Retry-After"] = str(retry_after)
 
         origin = request.headers.get("Origin")
         if origin in ALLOWED_ORIGINS:
