@@ -8,9 +8,12 @@ import time
 
 app = FastAPI()
 
+ALLOWED_ORIGINS = [
+    "https://exam.sanand.workers.dev",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,7 +52,7 @@ async def limiter(request: Request, call_next):
         )
 
         origin = request.headers.get("Origin")
-        if origin:
+        if origin in ALLOWED_ORIGINS:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Vary"] = "Origin"
 
