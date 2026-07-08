@@ -21,6 +21,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Retry-After"],
 )
 
 TOTAL_ORDERS = 54
@@ -65,18 +66,22 @@ async def rate_limit(request: Request, call_next):
 
         retry_after = max(1, int(WINDOW - (now - bucket[0])))
 
-        response = JSONResponse(
+        origin = request.headers.get("Origin", "")
+
+        headers = {
+            "Retry-After": str(retry_after),
+        }
+
+        if origin:
+            headers["Access-Control-Allow-Origin"] = origin
+            headers["Access-Control-Expose-Headers"] = "Retry-After"
+            headers["Vary"] = "Origin"
+
+        return JSONResponse(
             status_code=429,
             content={"detail": "Rate limit exceeded"},
-            headers={"Retry-After": str(retry_after)},
+            headers=headers,
         )
-
-        origin = request.headers.get("Origin")
-        if origin in ALLOWED_ORIGINS:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Vary"] = "Origin"
-
-        return response
 
     bucket.append(now)
 
@@ -95,7 +100,7 @@ def create_order(
 
     if idempotency_key in idempotency:
         return JSONResponse(
-            status_code=201,
+            status_code=200,
             content=idempotency[idempotency_key],
         )
     result = {
