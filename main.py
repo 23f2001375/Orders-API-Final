@@ -3,14 +3,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from uuid import uuid4
+from collections import defaultdict, deque
 import base64
 import time
 
 app = FastAPI()
 
+EMAIL = "23f2001375@ds.study.iitm.ac.in"
+
 ALLOWED_ORIGINS = [
     "https://exam.sanand.workers.dev",
 ]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -23,29 +27,42 @@ TOTAL_ORDERS = 54
 RATE_LIMIT = 15
 WINDOW = 10
 
-idempotency = {}
-rate_buckets = {}
-
+# -----------------------------
+# Fixed catalog
+# -----------------------------
 catalog = [{"id": i} for i in range(1, TOTAL_ORDERS + 1)]
+
+# -----------------------------
+# In-memory stores
+# -----------------------------
+idempotency = {}
+rate_buckets = defaultdict(deque)
 
 
 class Order(BaseModel):
     item: str = "Sample Item"
 
 
+# -----------------------------
+# Rate Limiter Middleware
+# -----------------------------
 @app.middleware("http")
-async def limiter(request: Request, call_next):
-    # Allow CORS preflight
+async def rate_limit(request: Request, call_next):
+
+    # Allow preflight requests
     if request.method == "OPTIONS":
         return await call_next(request)
 
     client = request.headers.get("X-Client-Id", "anonymous")
-    now = time.time()
 
-    bucket = rate_buckets.get(client, [])
-    bucket = [t for t in bucket if now - t < WINDOW]
+    now = time.time()
+    bucket = rate_buckets[client]
+
+    while bucket and now - bucket[0] >= WINDOW:
+        bucket.popleft()
 
     if len(bucket) >= RATE_LIMIT:
+
         retry_after = max(1, int(WINDOW - (now - bucket[0])))
 
         response = JSONResponse(
@@ -63,21 +80,22 @@ async def limiter(request: Request, call_next):
         return response
 
     bucket.append(now)
-    rate_buckets[client] = bucket
 
-    return await call_next(request)
+    response = await call_next(request)
+    return response
 
 
-@app.post("/orders")
+# -----------------------------
+# POST /orders
+# -----------------------------
+@app.post("/orders", status_code=201)
 def create_order(
     order: Order,
     idempotency_key: str = Header(..., alias="Idempotency-Key"),
 ):
+
     if idempotency_key in idempotency:
-        return JSONResponse(
-            status_code=200,
-            content=idempotency[idempotency_key],
-        )
+        return idempotency[idempotency_key]
 
     result = {
         "id": str(uuid4()),
@@ -85,14 +103,16 @@ def create_order(
     }
 
     idempotency[idempotency_key] = result
+    return result
 
-    return JSONResponse(
-        status_code=201,
-        content=result,
-    )
 
+# -----------------------------
+# GET /orders
+# -----------------------------
 @app.get("/orders")
 def get_orders(limit: int = 10, cursor: str | None = None):
+
+    limit = max(1, min(limit, TOTAL_ORDERS))
 
     start = 0
 
@@ -102,14 +122,11 @@ def get_orders(limit: int = 10, cursor: str | None = None):
         except Exception:
             start = 0
 
-    limit = max(1, min(limit, TOTAL_ORDERS))
-
     end = min(start + limit, TOTAL_ORDERS)
 
     items = catalog[start:end]
 
     next_cursor = None
-
     if end < TOTAL_ORDERS:
         next_cursor = base64.b64encode(str(end).encode()).decode()
 
@@ -117,3 +134,8 @@ def get_orders(limit: int = 10, cursor: str | None = None):
         "items": items,
         "next_cursor": next_cursor,
     }
+
+
+@app.get("/")
+def root():
+    return {"status": "ok"}
