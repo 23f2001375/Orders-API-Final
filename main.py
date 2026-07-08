@@ -95,15 +95,20 @@ def create_order(
 ):
 
     if idempotency_key in idempotency:
-        return idempotency[idempotency_key]
-
+        return JSONResponse(
+            status_code=201,
+            content=idempotency[idempotency_key],
+        )
     result = {
         "id": str(uuid4()),
         "item": order.item,
     }
 
     idempotency[idempotency_key] = result
-    return result
+    return JSONResponse(
+        status_code=201,
+        content=result,
+    )
 
 
 # -----------------------------
