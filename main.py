@@ -46,17 +46,20 @@ async def limiter(request: Request, call_next):
     bucket = [t for t in bucket if now - t < WINDOW]
 
     if len(bucket) >= RATE_LIMIT:
+        retry_after = max(1, int(WINDOW - (now - bucket[0])))
+
         response = JSONResponse(
             status_code=429,
             content={"detail": "Rate limit exceeded"},
         )
+
+        response.headers["Retry-After"] = str(retry_after)
 
         origin = request.headers.get("Origin")
         if origin in ALLOWED_ORIGINS:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Vary"] = "Origin"
 
-        response.headers["Retry-After"] = "10"
         return response
 
     bucket.append(now)
